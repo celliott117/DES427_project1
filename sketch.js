@@ -25,9 +25,7 @@ function setup() {
   img.filter(BLUR, 5); // Apply a blur effect to the background image
 
   // Create the UI container div
-  //adjustments for x y pos
   uiContainer = createDiv();
-  uiContainer.position(width / 2 - 150 + 55, height / 2 - 150); // Position in the center with pixel shift down 55px
   uiContainer.style("display", "flex");
   uiContainer.style("flex-direction", "column");
   uiContainer.style("align-items", "center");
@@ -68,7 +66,21 @@ function setup() {
   colorPicker.style("border-radius", "10px"); //add border radius
   colorPicker.parent(uiContainer); //put this in the parent container
 
-   
+  positionUI(); // Center the UI container now that it's built
+}
+
+// Recenters the UI container in the canvas, with a slight downward shift
+function positionUI() {
+  uiContainer.position(
+    width / 2 - uiContainer.size().width / 2,
+    height / 2 - uiContainer.size().height / 2 + 55
+  );
+}
+
+// Keep the canvas and UI filling the window on resize
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  positionUI();
 }
 
 // Function for text elements in UI
