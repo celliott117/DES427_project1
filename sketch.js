@@ -40,12 +40,12 @@ function setup() {
 
   // Particle size slider
   sizeSlider = createSlider(1, 10, 5.5, 0.1); // Slider to control particle size (min,max,default,increment values)
-  createLabel("Particle Size").parent(uiContainer); // Add label for particle size
+  createLabel("Sparkle Size").parent(uiContainer); // Add label for particle size
   sizeSlider.parent(uiContainer); //put this in the parent container
 
   // Acceleration slider
   accelerationSlider = createSlider(0.00000001, 0.00008, 0.00001, 0.00000001); // Slider to control particle acceleration (min,max,default,increment values)
-  createLabel("Particle Acceleration").parent(uiContainer);
+  createLabel("Energy").parent(uiContainer);
   accelerationSlider.parent(uiContainer); //put this in the parent container
 
   // Volume slider
@@ -111,26 +111,46 @@ function draw() {
 
   fft.analyze(); // Always analyze the FFT for the waveform
 
-  line(width / 2, 0, width / 2, height);
-  // Get energy in bass (20–440 Hz) and treble (440–20000 Hz)
-  var bass = fft.getEnergy(20, 440); // analyzes Bass frequencies, sets var based on amplitude
-  var treble = fft.getEnergy(440, 20000); // Treble frequencies (see var bass)
+  line(width / 2, 0, width / 2, height); // Vertical center guideline, drawn before translating below
 
-  // Map the bass energy to the amplitude (amp) value for effects
-  var amp = map(bass, 0, 255, 0, 255); //takes bass amplitude range and maps it for a new variable
+  // Bass (20-440Hz) energy doubles as our overall "reactivity" amplitude for effects
+  var bass = fft.getEnergy(20, 440);
+  var amp = bass;
 
-  // Background image positioning and drawing
-  translate(width / 2, height / 2); // Translate to center of canvas
+  translate(width / 2, height / 2); // Translate to center of canvas for everything else
+
+  drawBackgroundImage(amp);
+  shakeUIContainer(amp);
+  drawDarkOverlay(amp);
+
+  let waveColor = colorPicker.color(); // Get selected color, used for both the waveform and the title card
+  drawWaveform(waveColor);
+
+  if (song.isPlaying()) {
+    spawnParticles(bass);
+  }
+  updateAndShowParticles(amp);
+
+  // Title card shows at song start, then again during the chorus (64.17s)
+  if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
+    drawTitleCard(waveColor, amp);
+  }
+}
+
+// Draws the blurred background image, with a small random tilt on loud bass hits
+function drawBackgroundImage(amp) {
   push();
   if (amp > 225) {
     rotate(random(-0.5, 0.5)); // Apply random rotation if amp is above a threshold
   }
   let imgRatio = img.width / img.height;
   let newWidth = height * imgRatio;
-  image(img, 0, 0, newWidth, height); // Draw the square background image, don't stretch
+  image(img, 0, 0, newWidth, height); // Draw the background image, don't stretch
   pop();
+}
 
-  // bump the UI container if amplitude exceeds a threshold
+// Bumps the UI container around on loud bass hits, otherwise keeps it steady
+function shakeUIContainer(amp) {
   if (amp > 229) {
     push();
     rotate(random(-10, 10)); // Random rotation of UI
@@ -143,28 +163,25 @@ function draw() {
     // Reset UI position when amplitude is below threshold
     uiContainer.style("transform", "translate(0px, 0px)");
   }
+}
 
-  // Apply a rectangle overlay with dynamic transparency
+// Applies a rectangle overlay with dynamic transparency (darker when quiet, brighter when loud)
+function drawDarkOverlay(amp) {
   let alpha = map(amp, 180, 255, 150, 50, true); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping), clamped so silence doesn't blow past full opacity
   fill(0, 0, 0, alpha); // Black color with transparency
   noStroke();
   rect(0, 0, width + 100, height + 100); // Overlay rectangle larger than canvas
+}
 
-  // console.log("Alpha value: " + alpha); // Log alpha value
-  // console.log("Screen height ",height,);
-  // console.log("Screen width ",width,);
-
-  // Use the color picker for waveform line color
-  let waveColor = colorPicker.color(); // Get selected color
+// Draws the smoothed, symmetric polar waveform shape
+function drawWaveform(waveColor) {
   stroke(waveColor); // Apply color to waveform line
   strokeWeight(3);
   noFill();
 
-  // Smooth the waveform for better visuals
   var wave = fft.waveform(); // Get the waveform
   var smoothedWave = smoothWave(wave, 5); // Smooth the waveform (see function below)
 
-  // Draw the smoothed waveform shape
   for (var t = -1; t <= 1; t += 2) {
     //for loop creates a symmetric waveform on both sides of y axis
     //runs once at -1, once at +1, then stops
@@ -180,39 +197,23 @@ function draw() {
     }
     endShape(); //all vertices are collected and a closed 'shape' (wave) is drawn
   }
+}
 
-  // Create new particles based on bass and treble energy (if song is playing)
+// Spawns two new particles for this frame, based on the current bass energy
+function spawnParticles(bass) {
+  particles.push(new Particle(bass));
+  particles.push(new Particle(bass));
+}
 
-  if (song.isPlaying()) {
-    //check if song is playing
-    var particleAcceleration = map(amp, 0, 255, 0.01, 0.5); // Map amplitude of bass frequencies onto smaller range 0.01 to 0.5 minmax
-    var p1 = new Particle(amp, bass, treble); // uses Particle class and draws a new particle, says 'you shall be known as p1'
-    var p2 = new Particle(amp, bass, treble); // ANOTHER ONE
-    //these particles are based on the audio during the frame when they are created
-    particles.push(p1); //SEND IT to the particles array
-    particles.push(p2); //ANOTHER ONE!
-  }
-  if (amp > 220) {
-    console.log("Amp:", amp);
-    // prints to console only if Amp value exceeds threshold (helpful to fine tune response threshold)
-  }
-
-  // Update and show particles
-  //FOR loop that goes backwards through the particles array, processing each one and updating
+// Updates and draws all active particles, removing any that have drifted off screen
+function updateAndShowParticles(amp) {
   for (var i = particles.length - 1; i >= 0; i--) {
-    //figures out how many particles are in the array, keeps going until hit's the 0th element, and checks each one by counting backwards
     if (!particles[i].edges()) {
-      //checks if THIS particle is still on the screen
-      particles[i].update(song.isPlaying(), amp); // uses particle class to update position, acceleration etc.
-      particles[i].show(); // Display the particle
+      particles[i].update(song.isPlaying(), amp);
+      particles[i].show();
     } else {
-      particles.splice(i, 1); // Remove particles that go off screen, removes it from the array, and frees up memory so my computer doesn't combust immediately
+      particles.splice(i, 1); // Remove particles that go off screen
     }
-  }
-  // console.log("Timestamp",song.currentTime());
-  // Title card shows at song start, then again during the chorus (64.17s)
-  if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
-    drawTitleCard(waveColor, amp);
   }
 }
 
@@ -302,8 +303,8 @@ function nextRainbowColor() {
 
 // Particle class for making the shapes behind the visualizer
 class Particle {
-  //constructor uses analysis of music (total volume/amplitude, then specifically bass and treble amp)
-  constructor(amp, bass, treble) {
+  //constructor uses the bass frequency energy to drive the particle's outward acceleration
+  constructor(bass) {
     this.pos = p5.Vector.random2D().mult(200); // set random radial position from 0,0 center, displaced 240 pixels from origin/center of visualizer
     this.vel = createVector(0, 0); // particle doesn't move when first generated
 
@@ -391,8 +392,7 @@ class Particle {
     if (this.shapeType === 0) {
       ellipse(0, 0, this.w, this.w); // Ellipse
     } else if (this.shapeType === 1) {
-      rectMode(CENTER);
-      rect(0, 0, this.w, this.w); // Rectangle
+      rect(0, 0, this.w, this.w); // Rectangle (rectMode(CENTER) is set once in setup())
     } else if (this.shapeType === 2) {
       triangle(0, -this.w / 2, this.w / 2, this.w / 2, -this.w / 2, this.w / 2); // Triangle
     }
