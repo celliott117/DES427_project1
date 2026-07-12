@@ -6,3 +6,77 @@ html, body {
 canvas {
   display: block;
 }
+
+.ui-panel {
+  position: absolute; /* shrink-to-fit from the start, so size() measures correctly before the first .position() call */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 28px;
+  border-radius: 16px;
+  background: rgba(20, 0, 20, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 150, 255, 0.25);
+  font-family: sans-serif;
+}
+
+.ui-label {
+  color: white;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.8;
+  margin: 0;
+}
+
+.play-button {
+  font-size: 22px;
+  padding: 14px 36px;
+  background-color: rgb(255, 150, 255);
+  border: none;
+  color: white;
+  border-radius: 10px;
+  width: 150px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.play-button:hover {
+  background-color: rgb(255, 110, 255);
+  transform: scale(1.04);
+}
+
+.play-button:active {
+  transform: scale(0.97);
+}
+
+input[type="range"] {
+  width: 180px;
+  accent-color: rgb(255, 100, 255);
+  cursor: pointer;
+}
+
+input[type="color"] {
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+}
+
+.start-hint {
+  position: absolute; /* shrink-to-fit from the start, see .ui-panel comment */
+  color: white;
+  font-family: sans-serif;
+  font-size: 16px;
+  opacity: 0.75;
+  text-align: center;
+  white-space: nowrap;
+  animation: pulse-hint 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-hint {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.85; }
+}

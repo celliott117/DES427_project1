@@ -3,7 +3,8 @@ var img;
 var fft; //audio frequency analyzer that is used throughout the visualizer
 var particles = [];
 var uiContainer;
-var sizeSlider, accelerationSlider, colorPicker, playButton;
+var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton;
+var startHint;
 var particleSpeed = 0.05; // Default speed of particles
 var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas
 
@@ -26,28 +27,15 @@ function setup() {
 
   // Create the UI container div
   uiContainer = createDiv();
-  uiContainer.style("display", "flex");
-  uiContainer.style("flex-direction", "column");
-  uiContainer.style("align-items", "center");
-  uiContainer.style("padding", "20px");
-  uiContainer.style("border-radius", "10px");
+  uiContainer.addClass("ui-panel");
 
   // Play button
   playButton = createButton("Play");
+  playButton.addClass("play-button");
   playButton.mousePressed(function () {
     togglePlay(); // Toggle play/pause when clicked
   });
   playButton.parent(uiContainer);
-
-  // Style the Play/Pause button
-  playButton.style("font-size", "24px");
-  playButton.style("padding", "15px 30px");
-  playButton.style("margin-bottom", "10px");
-  playButton.style("background-color", "rgb(255, 150, 255)");
-  playButton.style("border", "none");
-  playButton.style("color", "white");
-  playButton.style("border-radius", "10px");
-  playButton.style("width", "150px");
 
   // Particle size slider
   sizeSlider = createSlider(1, 10, 5.5, 0.1); // Slider to control particle size (min,max,default,increment values)
@@ -59,22 +47,36 @@ function setup() {
   createLabel("Particle Acceleration").parent(uiContainer);
   accelerationSlider.parent(uiContainer); //put this in the parent container
 
+  // Volume slider
+  volumeSlider = createSlider(0, 1, 0.8, 0.01); // Slider to control song volume
+  createLabel("Volume").parent(uiContainer);
+  volumeSlider.parent(uiContainer);
+
   // Color picker for particles
   colorPicker = createColorPicker("#ff00ff"); // Default particle color (pink)
   createLabel("Color").parent(uiContainer); //put this in the parent container
   colorPicker.size(150, 80); //dimensions
-  colorPicker.style("border-radius", "10px"); //add border radius
   colorPicker.parent(uiContainer); //put this in the parent container
+
+  // Hint shown before the song has ever been started
+  startHint = createDiv("click outside the circle to play");
+  startHint.addClass("start-hint");
 
   positionUI(); // Center the UI container now that it's built
 }
 
-// Recenters the UI container in the canvas, with a slight downward shift
+// Recenters the UI container (and start hint, if present) in the canvas
 function positionUI() {
   uiContainer.position(
     width / 2 - uiContainer.size().width / 2,
     height / 2 - uiContainer.size().height / 2 + 55
   );
+  if (startHint) {
+    startHint.position(
+      width / 2 - startHint.size().width / 2,
+      height / 2 - visualizerRadius - 50
+    );
+  }
 }
 
 // Keep the canvas and UI filling the window on resize
@@ -86,15 +88,20 @@ function windowResized() {
 // Function for text elements in UI
 function createLabel(text) {
   var label = createDiv(text); // Create a div element to hold the label text
-  label.style("color", "white"); // Set the text color to white
-  label.style("font-size", "16px"); // Set the font size
-  label.style("font-family", "sans-serif"); // Set the font family
-  label.style("margin-top", "10px"); // Add some space above the label
+  label.addClass("ui-label");
   return label; // Return the label div
+}
+
+// Change the cursor to a hand outside the visualizer's click-to-play radius
+function mouseMoved() {
+  var distance = dist(mouseX, mouseY, width / 2, height / 2);
+  cursor(distance > visualizerRadius ? HAND : ARROW);
 }
 // etch-a-sketch begins
 function draw() {
   background(0); // Clear background with black
+
+  song.setVolume(volumeSlider.value()); // Apply the volume slider each frame
 
   fft.analyze(); // Always analyze the FFT for the waveform
 
@@ -132,7 +139,7 @@ function draw() {
   }
 
   // Apply a rectangle overlay with dynamic transparency
-  let alpha = map(amp, 180, 255, 150, 50); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping)
+  let alpha = map(amp, 180, 255, 150, 50, true); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping), clamped so silence doesn't blow past full opacity
   fill(0, 0, 0, alpha); // Black color with transparency
   noStroke();
   rect(0, 0, width + 100, height + 100); // Overlay rectangle larger than canvas
@@ -224,9 +231,15 @@ function togglePlay() {
   if (song.isPlaying()) {
     song.pause(); // Pause if currently playing
     noLoop(); // Stop drawing when song is paused
+    playButton.html("Play");
   } else {
     song.play(); // Play the song if not playing
     loop(); // Start drawing again when song is playing
+    playButton.html("Pause");
+    if (startHint) {
+      startHint.remove(); // Only needed before the first play
+      startHint = null;
+    }
   }
 }
 
