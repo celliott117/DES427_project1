@@ -433,14 +433,19 @@ class Particle {
   edges() {
     //asks is this particle's x,y off the screen, returns boolean true/false
     // checks all four conditions, if any are true, returns "TRUE", otherwise we're still on the screen, says 'FALSE'
-    // Divide by vizScale since these positions are in local (pre-scale) units, while width/height are absolute pixels
-    let halfW = width / 2 / vizScale;
-    let halfH = height / 2 / vizScale;
+    // Bounds are the real screen edges converted into local (pre-scale) units relative to the
+    // origin. The origin isn't centered on screen (it's pillarboxed left on desktop), so the
+    // distance to the left edge and to the right edge aren't the same - using a single
+    // width/2 for both, as before, cut particles off well before the actual right edge.
+    let leftBound = -originX / vizScale;
+    let rightBound = (width - originX) / vizScale;
+    let topBound = -originY / vizScale;
+    let bottomBound = (height - originY) / vizScale;
     return (
-      this.pos.x < -halfW ||
-      this.pos.x > halfW ||
-      this.pos.y < -halfH ||
-      this.pos.y > halfH
+      this.pos.x < leftBound ||
+      this.pos.x > rightBound ||
+      this.pos.y < topBound ||
+      this.pos.y > bottomBound
     ); // Check if particle is off screen
   }
 
