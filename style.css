@@ -65,6 +65,22 @@ input[type="color"] {
   cursor: pointer;
 }
 
+.ui-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: white;
+  font-family: sans-serif;
+  font-size: 14px;
+}
+
+.ui-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: rgb(255, 100, 255);
+  cursor: pointer;
+}
+
 .start-hint {
   position: absolute; /* shrink-to-fit from the start, see .ui-panel comment */
   color: white;

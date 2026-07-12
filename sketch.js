@@ -3,10 +3,11 @@ var img;
 var fft; //audio frequency analyzer that is used throughout the visualizer
 var particles = [];
 var uiContainer;
-var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton;
+var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton, rainbowToggle;
 var startHint;
 var particleSpeed = 0.05; // Default speed of particles
 var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas
+var rainbowHue = 0; // Current hue for rainbow mode, advances each time a particle is spawned
 
 // Preloading sound and image files
 function preload() {
@@ -57,6 +58,11 @@ function setup() {
   createLabel("Color").parent(uiContainer); //put this in the parent container
   colorPicker.size(150, 80); //dimensions
   colorPicker.parent(uiContainer); //put this in the parent container
+
+  // Rainbow mode toggle: cycles each new particle's color through the hue wheel instead of using the color picker
+  rainbowToggle = createCheckbox("Rainbow Mode", false);
+  rainbowToggle.addClass("ui-checkbox");
+  rainbowToggle.parent(uiContainer);
 
   // Hint shown before the song has ever been started
   startHint = createDiv("click outside the circle to play");
@@ -244,7 +250,13 @@ function togglePlay() {
 }
 
 // Mouse click handler to toggle play/pause when clicking outside visualizer radius
-function mouseClicked() {
+function mouseClicked(event) {
+  // Ignore clicks on the UI panel itself (p5 fires this for clicks anywhere on the page,
+  // not just the canvas, so interacting with a slider/checkbox shouldn't also toggle playback)
+  if (event && uiContainer.elt.contains(event.target)) {
+    return;
+  }
+
   var distance = dist(mouseX, mouseY, width / 2, height / 2); // Calculate distance from center
 
   // Only toggle play/pause if the click is outside the visualizer radius
@@ -279,6 +291,15 @@ function smoothWave(wave, smoothingRange) {
   return smoothedWave; // once every array value is checked and averaged, return the smoothed waveform
 }
 
+// Returns the next color in the rainbow sequence for rainbow mode, advancing the shared hue counter
+function nextRainbowColor() {
+  colorMode(HSB, 360, 100, 100, 255);
+  let rainbowColor = color(rainbowHue, 85, 100);
+  colorMode(RGB, 255); // Restore the default color mode used everywhere else
+  rainbowHue = (rainbowHue + 18) % 360; // Step to the next hue for the next particle
+  return rainbowColor;
+}
+
 // Particle class for making the shapes behind the visualizer
 class Particle {
   //constructor uses analysis of music (total volume/amplitude, then specifically bass and treble amp)
@@ -305,8 +326,8 @@ class Particle {
     // Random rotation for particle based on 360deg
     this.rotation = random(TWO_PI);
 
-    // Set particle color from color picker
-    this.color = colorPicker.color();
+    // Set particle color: cycle through the rainbow if rainbow mode is on, otherwise use the color picker
+    this.color = rainbowToggle.checked() ? nextRainbowColor() : colorPicker.color();
   }
 
   //listens every frame to update particle behaviour
