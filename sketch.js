@@ -2,15 +2,27 @@ var song;
 var img;
 var fft; //audio frequency analyzer that is used throughout the visualizer
 var particles = [];
-var uiContainer;
-var sizeSlider, accelerationSlider, colorPicker, playButton, randomButton;
-var particleSize;
+var uiContainer, fxToggle;
+var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton, rainbowToggle;
+var startHint;
 var particleSpeed = 0.05; // Default speed of particles
-var accelerationFactor = 0.00005; // Default acceleration factor for particles
-var playPauseClicked = false; // Track if play/pause button was clicked
-var randomColorInterval;
-var isRandomized = false; // Track the state of the random color button
-var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas
+var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas (in local, unscaled units)
+var rainbowHue = 0; // Shared hue for rainbow mode; advances once per frame so all particles shift together
+var RAINBOW_SPEED = 0.75; // Degrees the shared hue advances per frame while rainbow mode is on
+
+// The visualizer's origin (in absolute canvas pixels) and scale, recomputed on resize.
+// Desktop: pillarboxed so a square window shows the right half of the visualizer, widening
+// windows reveal more of the left side. Narrow/mobile: scaled down to fit the window width,
+// and shifted down to leave room above for the stacked title text.
+var originX = 0;
+var originY = 0;
+var vizScale = 1;
+
+// Local (unscaled) y-position of the mobile title block's first line, used to keep it
+// above the circle and to position the start hint above it. See drawTitleCard()'s mobile
+// branch, which stacks lines below this using the same spacing as the desktop layout.
+var MOBILE_TITLE_TOP = -650;
+var MOBILE_MARGIN = 48; // Fixed real-pixel left margin for the mobile title, independent of vizScale
 
 // Preloading sound and image files
 function preload() {
@@ -29,123 +41,229 @@ function setup() {
 
   img.filter(BLUR, 5); // Apply a blur effect to the background image
 
-  // Create the UI container div
-  //adjustments for x y pos
+  // Create the UI container div: a horizontal row of controls that lives under the title
   uiContainer = createDiv();
-  uiContainer.position(width / 2 - 150 + 55, height / 2 - 150); // Position in the center with pixel shift down 55px
-  uiContainer.style("display", "flex");
-  uiContainer.style("flex-direction", "column");
-  uiContainer.style("align-items", "center");
-  uiContainer.style("padding", "20px");
-  uiContainer.style("border-radius", "10px");
+  uiContainer.addClass("ui-panel");
 
   // Play button
   playButton = createButton("Play");
+  playButton.addClass("play-button");
   playButton.mousePressed(function () {
     togglePlay(); // Toggle play/pause when clicked
-    playPauseClicked = true; // Set flag to true on play/pause click
   });
   playButton.parent(uiContainer);
 
-  // Style the Play/Pause button
-  playButton.style("font-size", "24px");
-  playButton.style("padding", "15px 30px");
-  playButton.style("margin-bottom", "10px");
-  playButton.style("background-color", "rgb(255, 150, 255)");
-  playButton.style("border", "none");
-  playButton.style("color", "white");
-  playButton.style("border-radius", "10px");
-  playButton.style("width", "150px");
-
   // Particle size slider
   sizeSlider = createSlider(1, 10, 5.5, 0.1); // Slider to control particle size (min,max,default,increment values)
-  createLabel("Particle Size").parent(uiContainer); // Add label for particle size
-  sizeSlider.parent(uiContainer); //put this in the parent container
+  createControlGroup("Sparkle Size", sizeSlider).parent(uiContainer);
 
   // Acceleration slider
   accelerationSlider = createSlider(0.00000001, 0.00008, 0.00001, 0.00000001); // Slider to control particle acceleration (min,max,default,increment values)
-  createLabel("Particle Acceleration").parent(uiContainer);
-  accelerationSlider.parent(uiContainer); //put this in the parent container
+  createControlGroup("Energy", accelerationSlider).parent(uiContainer);
 
-  // Color picker for particles
+  // Volume slider
+  volumeSlider = createSlider(0, 1, 0.8, 0.01); // Slider to control song volume
+  createControlGroup("Volume", volumeSlider).parent(uiContainer);
+
+  // Color picker for particles: a small square swatch rather than a big rectangle
   colorPicker = createColorPicker("#ff00ff"); // Default particle color (pink)
-  createLabel("Color").parent(uiContainer); //put this in the parent container
-  colorPicker.size(150, 80); //dimensions
-  colorPicker.style("border-radius", "10px"); //add border radius
-  colorPicker.parent(uiContainer); //put this in the parent container
+  colorPicker.size(48, 48);
+  createControlGroup("Color", colorPicker).parent(uiContainer);
 
-   
+  // Rainbow mode toggle: cycles each new particle's color through the hue wheel instead of using the color picker
+  rainbowToggle = createCheckbox("Rainbow", false);
+  rainbowToggle.addClass("ui-checkbox");
+  rainbowToggle.parent(uiContainer);
+
+  // Hamburger-style toggle shown only on narrow/mobile screens (see the media query in style.css)
+  fxToggle = createButton("☰ FX Controls");
+  fxToggle.addClass("fx-toggle");
+  fxToggle.mousePressed(function () {
+    uiContainer.toggleClass("open");
+  });
+
+  // Hint shown before the song has ever been started
+  startHint = createDiv("click outside the circle to play");
+  startHint.addClass("start-hint");
+
+  updateLayout(); // Compute the initial origin/scale before positioning anything
+  positionStartHint(); // The UI panel itself is centered/anchored entirely via CSS
+}
+
+// Wraps a labeled control (slider or color picker) in its own small vertical group,
+// so the panel can lay controls out left-to-right as a row
+function createControlGroup(labelText, element) {
+  var group = createDiv();
+  group.addClass("control-group");
+  createLabel(labelText).parent(group);
+  element.parent(group);
+  return group;
+}
+
+// Recomputes the visualizer's origin and scale for the current window size.
+// Desktop (width >= height): pillarboxed so a square window puts the visualizer's
+// horizontal center at the left edge, and wider windows reveal more of its left side.
+// Mobile/narrow (width < height): scaled down so the whole visualizer fits the width,
+// and shifted down to leave room above for the stacked title text.
+function updateLayout() {
+  if (width >= height) {
+    vizScale = 1;
+    originX = max(0, (width - height) / 2);
+    originY = height / 2;
+  } else {
+    vizScale = width / height;
+    originX = width / 2;
+    originY = height * 0.68;
+  }
+}
+
+// Positions the start hint above the visualizer circle (desktop) or above the stacked
+// title block (mobile). The UI panel itself is centered/anchored entirely via CSS.
+function positionStartHint() {
+  if (!startHint) return;
+  let hintY;
+  if (width >= height) {
+    hintY = originY - visualizerRadius * vizScale - 50;
+  } else {
+    // Top edge of the title's first line (it's vertically centered on MOBILE_TITLE_TOP,
+    // with textSize 45), converted to absolute pixels, minus the hint's own height and a
+    // fixed real-pixel gap - so the gap stays consistent regardless of vizScale.
+    let titleTopAbsoluteY = originY + (MOBILE_TITLE_TOP - 22.5) * vizScale;
+    hintY = titleTopAbsoluteY - startHint.size().height - 20;
+  }
+  startHint.position(originX - startHint.size().width / 2, hintY);
+}
+
+// Keep the canvas filling the window, and recompute layout/hint position on resize
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  updateLayout();
+  positionStartHint();
 }
 
 // Function for text elements in UI
 function createLabel(text) {
   var label = createDiv(text); // Create a div element to hold the label text
-  label.style("color", "white"); // Set the text color to white
-  label.style("font-size", "16px"); // Set the font size
-  label.style("font-family", "sans-serif"); // Set the font family
-  label.style("margin-top", "10px"); // Add some space above the label
+  label.addClass("ui-label");
   return label; // Return the label div
+}
+
+// Change the cursor to a hand outside the visualizer's click-to-play radius
+function mouseMoved() {
+  var distance = dist(mouseX, mouseY, originX, originY);
+  cursor(distance > visualizerRadius * vizScale ? HAND : ARROW);
 }
 // etch-a-sketch begins
 function draw() {
   background(0); // Clear background with black
 
+  updateLayout(); // Keep origin/scale current even if draw() was paused during a resize
+
+  song.setVolume(volumeSlider.value()); // Apply the volume slider each frame
+
   fft.analyze(); // Always analyze the FFT for the waveform
 
-  line(width / 2, 0, width / 2, height);
-  // Get energy in bass (20–440 Hz) and treble (440–20000 Hz)
-  var bass = fft.getEnergy(20, 440); // analyzes Bass frequencies, sets var based on amplitude
-  var treble = fft.getEnergy(440, 20000); // Treble frequencies (see var bass)
+  line(originX, 0, originX, height); // Vertical guideline at the visualizer's center, drawn before translating below
 
-  // Map the bass energy to the amplitude (amp) value for effects
-  var amp = map(bass, 0, 255, 0, 255); //takes bass amplitude range and maps it for a new variable
+  // Bass (20-440Hz) energy doubles as our overall "reactivity" amplitude for effects
+  var bass = fft.getEnergy(20, 440);
+  var amp = bass;
 
-  // Background image positioning and drawing
-  translate(width / 2, height / 2); // Translate to center of canvas
+  shakeUIContainer(amp); // DOM element, independent of the canvas transform below
+
+  // The background image always fills/centers on the actual window, independent of the
+  // visualizer's responsive origin and scale
+  push();
+  translate(width / 2, height / 2);
+  drawBackgroundImage(amp);
+  pop();
+
+  drawDarkOverlay(amp); // Drawn in absolute canvas space so it fully covers the viewport at any scale
+
+  if (rainbowToggle.checked()) {
+    rainbowHue = (rainbowHue + RAINBOW_SPEED) % 360; // Shared hue advances once per frame, not per particle
+  }
+
+  let waveColor = colorPicker.color(); // Get selected color, used for both the waveform and the title card
+
+  push();
+  translate(originX, originY);
+  scale(vizScale);
+  drawWaveform(waveColor);
+  drawClickHintRing();
+
+  if (song.isPlaying()) {
+    spawnParticles(bass);
+  }
+  updateAndShowParticles(amp);
+
+  // Title card shows at song start, then again during the chorus (64.17s)
+  if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
+    drawTitleCard(waveColor, amp);
+  }
+  pop();
+}
+
+// A subtle pulsing ring just outside the click-to-play radius, hinting where to click.
+// Only shown before the song has ever been played (same lifetime as the start hint text).
+function drawClickHintRing() {
+  if (!startHint) return;
+  push();
+  noFill();
+  let pulse = (sin(frameCount * 0.05) + 1) / 2; // Breathes between 0 and 1
+  stroke(255, 255, 255, lerp(30, 110, pulse));
+  strokeWeight(2);
+  ellipse(0, 0, visualizerRadius * 2 + 40, visualizerRadius * 2 + 40);
+  pop();
+}
+
+// Draws the blurred background image, with a small random tilt on loud bass hits
+function drawBackgroundImage(amp) {
   push();
   if (amp > 225) {
     rotate(random(-0.5, 0.5)); // Apply random rotation if amp is above a threshold
   }
   let imgRatio = img.width / img.height;
   let newWidth = height * imgRatio;
-  image(img, 0, 0, newWidth, height); // Draw the square background image, don't stretch
+  image(img, 0, 0, newWidth, height); // Draw the background image, don't stretch
   pop();
+}
 
-  // bump the UI container if amplitude exceeds a threshold
+// Bumps the UI container around on loud bass hits, otherwise keeps it steady.
+// The panel is horizontally centered via CSS (left: 50%), so every transform here
+// keeps the "translateX(-50%)" centering term and just adds the shake offset to it.
+function shakeUIContainer(amp) {
   if (amp > 229) {
-    push();
-    rotate(random(-10, 10)); // Random rotation of UI
     uiContainer.style(
       "transform",
-      `translate(${random(-5, 5)}px, ${random(-5, 5)}px)` //query a random number between two values and insert in string value
+      `translate(calc(-50% + ${random(-5, 5)}px), ${random(-5, 5)}px)`
     );
-    pop();
   } else {
-    // Reset UI position when amplitude is below threshold
-    uiContainer.style("transform", "translate(0px, 0px)");
+    uiContainer.style("transform", "translateX(-50%)");
   }
+}
 
-  // Apply a rectangle overlay with dynamic transparency
-  let alpha = map(amp, 180, 255, 150, 50); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping)
+// Applies a rectangle overlay with dynamic transparency (darker when quiet, brighter when loud).
+// Drawn with the transform reset so it covers the full canvas regardless of the visualizer's scale.
+function drawDarkOverlay(amp) {
+  let alpha = map(amp, 180, 255, 150, 50, true); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping), clamped so silence doesn't blow past full opacity
+  push();
+  resetMatrix();
   fill(0, 0, 0, alpha); // Black color with transparency
   noStroke();
-  rect(0, 0, width + 100, height + 100); // Overlay rectangle larger than canvas
+  rect(width / 2, height / 2, width, height); // Covers the full canvas (rectMode(CENTER) is set in setup())
+  pop();
+}
 
-  // console.log("Alpha value: " + alpha); // Log alpha value
-  // console.log("Screen height ",height,);
-  // console.log("Screen width ",width,);
-
-  // Use the color picker for waveform line color
-  let waveColor = colorPicker.color(); // Get selected color
+// Draws the smoothed, symmetric polar waveform shape
+function drawWaveform(waveColor) {
   stroke(waveColor); // Apply color to waveform line
   strokeWeight(3);
   noFill();
 
-  // Smooth the waveform for better visuals
   var wave = fft.waveform(); // Get the waveform
   var smoothedWave = smoothWave(wave, 5); // Smooth the waveform (see function below)
 
-  // Draw the smoothed waveform shape
   for (var t = -1; t <= 1; t += 2) {
     //for loop creates a symmetric waveform on both sides of y axis
     //runs once at -1, once at +1, then stops
@@ -161,85 +279,53 @@ function draw() {
     }
     endShape(); //all vertices are collected and a closed 'shape' (wave) is drawn
   }
+}
 
-  // Create new particles based on bass and treble energy (if song is playing)
+// Spawns two new particles for this frame, based on the current bass energy
+function spawnParticles(bass) {
+  particles.push(new Particle(bass));
+  particles.push(new Particle(bass));
+}
 
-  if (song.isPlaying()) {
-    //check if song is playing
-    var particleAcceleration = map(amp, 0, 255, 0.01, 0.5); // Map amplitude of bass frequencies onto smaller range 0.01 to 0.5 minmax
-    var p1 = new Particle(amp, bass, treble); // uses Particle class and draws a new particle, says 'you shall be known as p1'
-    var p2 = new Particle(amp, bass, treble); // ANOTHER ONE
-    //these particles are based on the audio during the frame when they are created
-    particles.push(p1); //SEND IT to the particles array
-    particles.push(p2); //ANOTHER ONE!
-  }
-  if (amp > 220) {
-    console.log("Amp:", amp);
-    // prints to console only if Amp value exceeds threshold (helpful to fine tune response threshold)
-  }
-
-  // Update and show particles
-  //FOR loop that goes backwards through the particles array, processing each one and updating
+// Updates and draws all active particles, removing any that have drifted off screen
+function updateAndShowParticles(amp) {
   for (var i = particles.length - 1; i >= 0; i--) {
-    //figures out how many particles are in the array, keeps going until hit's the 0th element, and checks each one by counting backwards
     if (!particles[i].edges()) {
-      //checks if THIS particle is still on the screen
-      particles[i].update(song.isPlaying(), amp); // uses particle class to update position, acceleration etc.
-      particles[i].show(); // Display the particle
+      particles[i].update(song.isPlaying(), amp);
+      particles[i].show();
     } else {
-      particles.splice(i, 1); // Remove particles that go off screen, removes it from the array, and frees up memory so my computer doesn't combust immediately
+      particles.splice(i, 1); // Remove particles that go off screen
     }
   }
-  // console.log("Timestamp",song.currentTime());
-  if (song.currentTime() <= 0.00001) {
-    //64.17seconds reveal the following during the chorus ()
-    push();
-    let textAlpha = map(amp, 200, 240, 50, 255);
-    
-    fill(
-      waveColor.levels[0],
-      waveColor.levels[1],
-      waveColor.levels[2],
-      textAlpha
-    );
+}
 
-    // line(285, -900, 285, 900); //guide to align letters
-    
-    textAlign(LEFT, CENTER);
-    textSize(45);
-    text("welcome to the", 277, -190);
-    textSize(128);
-    text("PINK", 275, -110);
-    text("PONY", 275, 0);
-    text("{CLUB}", 237, 110); 
-     // Fades in and out with amplitude
-    pop();
-  }
-  // Check if the song has been playing long enough to display
-  if (song.currentTime() >= 64.17) {
-    //64.17seconds reveal the following during the chorus ()
-    push();
-    let textAlpha = map(amp, 200, 240, 50, 255);
-    // noStroke();
-    fill(
-      waveColor.levels[0],
-      waveColor.levels[1],
-      waveColor.levels[2],
-      textAlpha
-    );
+// Draws the "welcome to the PINK PONY {CLUB}" title card, fading in/out with amplitude.
+// Desktop: to the right of the circle. Mobile/narrow: same left alignment, line spacing, and
+// font sizes as desktop, just anchored to a fixed left margin and stacked above the circle.
+function drawTitleCard(waveColor, amp) {
+  push();
+  let textAlpha = map(amp, 200, 240, 50, 255);
+  fill(waveColor.levels[0], waveColor.levels[1], waveColor.levels[2], textAlpha);
 
-    // line(285, -900, 285, 900); //guide to align letters
-    
-    textAlign(LEFT, CENTER);
+  textAlign(LEFT, CENTER);
+  if (width >= height) {
     textSize(45);
     text("welcome to the", 277, -190);
     textSize(128);
     text("PINK", 275, -110);
     text("PONY", 275, 0);
     text("{CLUB}", 237, 110);
-     // Fades in and out with amplitude
-    pop();
+  } else {
+    // Fixed real-pixel margin from the left edge, converted into local (pre-scale) units
+    let leftX = (MOBILE_MARGIN - originX) / vizScale;
+    textSize(45);
+    text("welcome to the", leftX, MOBILE_TITLE_TOP);
+    textSize(128);
+    text("PINK", leftX - 2, MOBILE_TITLE_TOP + 80);
+    text("PONY", leftX - 2, MOBILE_TITLE_TOP + 190);
+    text("{CLUB}", leftX - 40, MOBILE_TITLE_TOP + 300);
   }
+  pop();
 }
 
 // Toggle the play/pause state of the song
@@ -247,18 +333,30 @@ function togglePlay() {
   if (song.isPlaying()) {
     song.pause(); // Pause if currently playing
     noLoop(); // Stop drawing when song is paused
+    playButton.html("Play");
   } else {
     song.play(); // Play the song if not playing
     loop(); // Start drawing again when song is playing
+    playButton.html("Pause");
+    if (startHint) {
+      startHint.remove(); // Only needed before the first play
+      startHint = null;
+    }
   }
 }
 
 // Mouse click handler to toggle play/pause when clicking outside visualizer radius
-function mouseClicked() {
-  var distance = dist(mouseX, mouseY, width / 2, height / 2); // Calculate distance from center
+function mouseClicked(event) {
+  // Ignore clicks on the UI panel or the mobile FX toggle (p5 fires this for clicks anywhere
+  // on the page, not just the canvas, so interacting with a control shouldn't also toggle playback)
+  if (event && (uiContainer.elt.contains(event.target) || fxToggle.elt.contains(event.target))) {
+    return;
+  }
+
+  var distance = dist(mouseX, mouseY, originX, originY); // Calculate distance from the visualizer's center
 
   // Only toggle play/pause if the click is outside the visualizer radius
-  if (distance > visualizerRadius) {
+  if (distance > visualizerRadius * vizScale) {
     togglePlay();
   }
 }
@@ -289,10 +387,18 @@ function smoothWave(wave, smoothingRange) {
   return smoothedWave; // once every array value is checked and averaged, return the smoothed waveform
 }
 
+// Returns the current shared rainbow color (see rainbowHue, advanced once per frame in draw())
+function currentRainbowColor() {
+  colorMode(HSB, 360, 100, 100, 255);
+  let rainbowColor = color(rainbowHue, 85, 100);
+  colorMode(RGB, 255); // Restore the default color mode used everywhere else
+  return rainbowColor;
+}
+
 // Particle class for making the shapes behind the visualizer
 class Particle {
-  //constructor uses analysis of music (total volume/amplitude, then specifically bass and treble amp)
-  constructor(amp, bass, treble) {
+  //constructor uses the bass frequency energy to drive the particle's outward acceleration
+  constructor(bass) {
     this.pos = p5.Vector.random2D().mult(200); // set random radial position from 0,0 center, displaced 240 pixels from origin/center of visualizer
     this.vel = createVector(0, 0); // particle doesn't move when first generated
 
@@ -315,7 +421,7 @@ class Particle {
     // Random rotation for particle based on 360deg
     this.rotation = random(TWO_PI);
 
-    // Set particle color from color picker
+    // Color when rainbow mode is off; if it's on, show() uses the shared rainbow color instead
     this.color = colorPicker.color();
   }
 
@@ -336,11 +442,19 @@ class Particle {
   edges() {
     //asks is this particle's x,y off the screen, returns boolean true/false
     // checks all four conditions, if any are true, returns "TRUE", otherwise we're still on the screen, says 'FALSE'
+    // Bounds are the real screen edges converted into local (pre-scale) units relative to the
+    // origin. The origin isn't centered on screen (it's pillarboxed left on desktop), so the
+    // distance to the left edge and to the right edge aren't the same - using a single
+    // width/2 for both, as before, cut particles off well before the actual right edge.
+    let leftBound = -originX / vizScale;
+    let rightBound = (width - originX) / vizScale;
+    let topBound = -originY / vizScale;
+    let bottomBound = (height - originY) / vizScale;
     return (
-      this.pos.x < -width / 2 ||
-      this.pos.x > width / 2 ||
-      this.pos.y < -height / 2 ||
-      this.pos.y > height / 2
+      this.pos.x < leftBound ||
+      this.pos.x > rightBound ||
+      this.pos.y < topBound ||
+      this.pos.y > bottomBound
     ); // Check if particle is off screen
   }
 
@@ -348,8 +462,12 @@ class Particle {
     //runs if particle still on screen
     noStroke(); // No outline for the shapes
     //sets how far from center of canvas particles go before they disappear
-    let maxDistance = (width / 2) * 0.5;
+    let maxDistance = (width / 2 / vizScale) * 0.5;
     let distance = dist(0, 0, this.pos.x, this.pos.y);
+
+    // In rainbow mode, every particle reads the same shared hue each frame (see draw()),
+    // so they all shift color together instead of each keeping the hue from when it spawned
+    let baseColor = rainbowToggle.checked() ? currentRainbowColor() : this.color;
 
     // Set the alpha transparency based on distance (for fade out)
     //lerp = linear interpolation --> set between 255 and 0, based on the distance from the center, then setting the ratio from 1 (full alpha) to 0 (fully faded)
@@ -359,12 +477,12 @@ class Particle {
     //same as alpha but takes the current color HSB brightness (second value)
     // dimmer at edges
     let brightness = lerp(
-      this.color.levels[2],
+      baseColor.levels[2],
       255,
       map(distance, 0, maxDistance, 0.6, 1)
     ); // Brighter at center
     let saturation = lerp(
-      this.color.levels[1],
+      baseColor.levels[1],
       255,
       map(distance, 0, maxDistance, 0, 0.2)
     ); // More saturated at center, 50% saturation at edges
@@ -376,12 +494,11 @@ class Particle {
 
     // Draw different shapes based on random selection
     // Uses color picker Hue, plus the saturation, brightness and alpha values and applies those to whatever shape type is chosen circle=0,square=1,triangle=2 (coordinates are based on the new 0,0 set at 'push')
-    fill(this.color.levels[0], saturation, brightness, alpha);
+    fill(baseColor.levels[0], saturation, brightness, alpha);
     if (this.shapeType === 0) {
       ellipse(0, 0, this.w, this.w); // Ellipse
     } else if (this.shapeType === 1) {
-      rectMode(CENTER);
-      rect(0, 0, this.w, this.w); // Rectangle
+      rect(0, 0, this.w, this.w); // Rectangle (rectMode(CENTER) is set once in setup())
     } else if (this.shapeType === 2) {
       triangle(0, -this.w / 2, this.w / 2, this.w / 2, -this.w / 2, this.w / 2); // Triangle
     }
