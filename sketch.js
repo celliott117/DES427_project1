@@ -3,13 +3,8 @@ var img;
 var fft; //audio frequency analyzer that is used throughout the visualizer
 var particles = [];
 var uiContainer;
-var sizeSlider, accelerationSlider, colorPicker, playButton, randomButton;
-var particleSize;
+var sizeSlider, accelerationSlider, colorPicker, playButton;
 var particleSpeed = 0.05; // Default speed of particles
-var accelerationFactor = 0.00005; // Default acceleration factor for particles
-var playPauseClicked = false; // Track if play/pause button was clicked
-var randomColorInterval;
-var isRandomized = false; // Track the state of the random color button
 var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas
 
 // Preloading sound and image files
@@ -43,7 +38,6 @@ function setup() {
   playButton = createButton("Play");
   playButton.mousePressed(function () {
     togglePlay(); // Toggle play/pause when clicked
-    playPauseClicked = true; // Set flag to true on play/pause click
   });
   playButton.parent(uiContainer);
 
@@ -191,55 +185,26 @@ function draw() {
     }
   }
   // console.log("Timestamp",song.currentTime());
-  if (song.currentTime() <= 0.00001) {
-    //64.17seconds reveal the following during the chorus ()
-    push();
-    let textAlpha = map(amp, 200, 240, 50, 255);
-    
-    fill(
-      waveColor.levels[0],
-      waveColor.levels[1],
-      waveColor.levels[2],
-      textAlpha
-    );
-
-    // line(285, -900, 285, 900); //guide to align letters
-    
-    textAlign(LEFT, CENTER);
-    textSize(45);
-    text("welcome to the", 277, -190);
-    textSize(128);
-    text("PINK", 275, -110);
-    text("PONY", 275, 0);
-    text("{CLUB}", 237, 110); 
-     // Fades in and out with amplitude
-    pop();
+  // Title card shows at song start, then again during the chorus (64.17s)
+  if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
+    drawTitleCard(waveColor, amp);
   }
-  // Check if the song has been playing long enough to display
-  if (song.currentTime() >= 64.17) {
-    //64.17seconds reveal the following during the chorus ()
-    push();
-    let textAlpha = map(amp, 200, 240, 50, 255);
-    // noStroke();
-    fill(
-      waveColor.levels[0],
-      waveColor.levels[1],
-      waveColor.levels[2],
-      textAlpha
-    );
+}
 
-    // line(285, -900, 285, 900); //guide to align letters
-    
-    textAlign(LEFT, CENTER);
-    textSize(45);
-    text("welcome to the", 277, -190);
-    textSize(128);
-    text("PINK", 275, -110);
-    text("PONY", 275, 0);
-    text("{CLUB}", 237, 110);
-     // Fades in and out with amplitude
-    pop();
-  }
+// Draws the "welcome to the PINK PONY {CLUB}" title card, fading in/out with amplitude
+function drawTitleCard(waveColor, amp) {
+  push();
+  let textAlpha = map(amp, 200, 240, 50, 255);
+  fill(waveColor.levels[0], waveColor.levels[1], waveColor.levels[2], textAlpha);
+
+  textAlign(LEFT, CENTER);
+  textSize(45);
+  text("welcome to the", 277, -190);
+  textSize(128);
+  text("PINK", 275, -110);
+  text("PONY", 275, 0);
+  text("{CLUB}", 237, 110);
+  pop();
 }
 
 // Toggle the play/pause state of the song
