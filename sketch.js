@@ -18,10 +18,11 @@ var originX = 0;
 var originY = 0;
 var vizScale = 1;
 
-// Local (unscaled) y-range of the stacked mobile title block, used to keep it above the
-// circle and to position the start hint above it. See drawTitleCard()'s mobile branch.
+// Local (unscaled) y-position of the mobile title block's first line, used to keep it
+// above the circle and to position the start hint above it. See drawTitleCard()'s mobile
+// branch, which stacks lines below this using the same spacing as the desktop layout.
 var MOBILE_TITLE_TOP = -650;
-var MOBILE_TITLE_BOTTOM = -260;
+var MOBILE_MARGIN = 48; // Fixed real-pixel left margin for the mobile title, independent of vizScale
 
 // Preloading sound and image files
 function preload() {
@@ -120,10 +121,16 @@ function updateLayout() {
 // title block (mobile). The UI panel itself is centered/anchored entirely via CSS.
 function positionStartHint() {
   if (!startHint) return;
-  let hintY =
-    width >= height
-      ? originY - visualizerRadius * vizScale - 50
-      : originY + (MOBILE_TITLE_TOP - 40) * vizScale;
+  let hintY;
+  if (width >= height) {
+    hintY = originY - visualizerRadius * vizScale - 50;
+  } else {
+    // Top edge of the title's first line (it's vertically centered on MOBILE_TITLE_TOP,
+    // with textSize 45), converted to absolute pixels, minus the hint's own height and a
+    // fixed real-pixel gap - so the gap stays consistent regardless of vizScale.
+    let titleTopAbsoluteY = originY + (MOBILE_TITLE_TOP - 22.5) * vizScale;
+    hintY = titleTopAbsoluteY - startHint.size().height - 20;
+  }
   startHint.position(originX - startHint.size().width / 2, hintY);
 }
 
@@ -293,14 +300,15 @@ function updateAndShowParticles(amp) {
 }
 
 // Draws the "welcome to the PINK PONY {CLUB}" title card, fading in/out with amplitude.
-// Desktop: to the right of the circle. Mobile/narrow: centered and stacked above the circle.
+// Desktop: to the right of the circle. Mobile/narrow: same left alignment, line spacing, and
+// font sizes as desktop, just anchored to a fixed left margin and stacked above the circle.
 function drawTitleCard(waveColor, amp) {
   push();
   let textAlpha = map(amp, 200, 240, 50, 255);
   fill(waveColor.levels[0], waveColor.levels[1], waveColor.levels[2], textAlpha);
 
+  textAlign(LEFT, CENTER);
   if (width >= height) {
-    textAlign(LEFT, CENTER);
     textSize(45);
     text("welcome to the", 277, -190);
     textSize(128);
@@ -308,13 +316,14 @@ function drawTitleCard(waveColor, amp) {
     text("PONY", 275, 0);
     text("{CLUB}", 237, 110);
   } else {
-    textAlign(CENTER, CENTER);
-    textSize(32);
-    text("welcome to the", 0, MOBILE_TITLE_TOP + 30);
-    textSize(90);
-    text("PINK", 0, MOBILE_TITLE_TOP + 130);
-    text("PONY", 0, MOBILE_TITLE_TOP + 230);
-    text("{CLUB}", 0, MOBILE_TITLE_BOTTOM);
+    // Fixed real-pixel margin from the left edge, converted into local (pre-scale) units
+    let leftX = (MOBILE_MARGIN - originX) / vizScale;
+    textSize(45);
+    text("welcome to the", leftX, MOBILE_TITLE_TOP);
+    textSize(128);
+    text("PINK", leftX - 2, MOBILE_TITLE_TOP + 80);
+    text("PONY", leftX - 2, MOBILE_TITLE_TOP + 190);
+    text("{CLUB}", leftX - 40, MOBILE_TITLE_TOP + 300);
   }
   pop();
 }
