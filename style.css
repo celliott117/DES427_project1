@@ -8,10 +8,12 @@ canvas {
 }
 
 .ui-panel {
-  position: absolute; /* shrink-to-fit from the start, so size() measures correctly before the first .position() call */
+  position: absolute;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%); /* JS (shakeUIContainer) updates this each frame, keeping the -50% term */
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
   align-items: center;
   gap: 18px;
   padding: 14px 22px;
@@ -129,19 +131,22 @@ input[type="color"] {
   font-family: sans-serif;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 760px) {
   .ui-panel {
     display: none;
   }
 
-  /* Overridden with !important since JS also sets inline position/left/top for the desktop layout */
+  /* Overridden with !important since JS also sets an inline transform each frame for the desktop shake/centering */
   .ui-panel.open {
     display: flex !important;
     position: fixed !important;
     top: 60px !important;
     left: 14px !important;
     right: 14px !important;
+    bottom: auto !important;
+    transform: none !important;
     opacity: 1 !important;
+    flex-wrap: wrap;
     justify-content: center;
   }
 

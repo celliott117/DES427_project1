@@ -7,19 +7,21 @@ var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton, rainb
 var startHint;
 var particleSpeed = 0.05; // Default speed of particles
 var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas (in local, unscaled units)
-var rainbowHue = 0; // Current hue for rainbow mode, advances each time a particle is spawned
+var rainbowHue = 0; // Shared hue for rainbow mode; advances once per frame so all particles shift together
+var RAINBOW_SPEED = 0.75; // Degrees the shared hue advances per frame while rainbow mode is on
 
 // The visualizer's origin (in absolute canvas pixels) and scale, recomputed on resize.
 // Desktop: pillarboxed so a square window shows the right half of the visualizer, widening
-// windows reveal more of the left side. Narrow/mobile: scaled down to fit the window width.
+// windows reveal more of the left side. Narrow/mobile: scaled down to fit the window width,
+// and shifted down to leave room above for the stacked title text.
 var originX = 0;
 var originY = 0;
 var vizScale = 1;
 
-// Rough bounding box (in local, unscaled units) of the "PINK PONY {CLUB}" title text,
-// used to position the UI panel underneath it. Kept separate from the exact per-line
-// x/y values in drawTitleCard() so tweaking one doesn't require touching the other.
-var TITLE_BOUNDS = { left: 237, bottom: 180 };
+// Local (unscaled) y-range of the stacked mobile title block, used to keep it above the
+// circle and to position the start hint above it. See drawTitleCard()'s mobile branch.
+var MOBILE_TITLE_TOP = -650;
+var MOBILE_TITLE_BOTTOM = -260;
 
 // Preloading sound and image files
 function preload() {
@@ -84,7 +86,7 @@ function setup() {
   startHint.addClass("start-hint");
 
   updateLayout(); // Compute the initial origin/scale before positioning anything
-  positionUI(); // Place the UI panel now that it's built
+  positionStartHint(); // The UI panel itself is centered/anchored entirely via CSS
 }
 
 // Wraps a labeled control (slider or color picker) in its own small vertical group,
@@ -100,37 +102,36 @@ function createControlGroup(labelText, element) {
 // Recomputes the visualizer's origin and scale for the current window size.
 // Desktop (width >= height): pillarboxed so a square window puts the visualizer's
 // horizontal center at the left edge, and wider windows reveal more of its left side.
-// Mobile/narrow (width < height): scaled down so the whole visualizer fits the width.
+// Mobile/narrow (width < height): scaled down so the whole visualizer fits the width,
+// and shifted down to leave room above for the stacked title text.
 function updateLayout() {
   if (width >= height) {
     vizScale = 1;
     originX = max(0, (width - height) / 2);
+    originY = height / 2;
   } else {
     vizScale = width / height;
     originX = width / 2;
-  }
-  originY = height / 2;
-}
-
-// Positions the UI panel just under the title text, and the start hint above the visualizer circle
-function positionUI() {
-  uiContainer.position(
-    originX + TITLE_BOUNDS.left * vizScale,
-    originY + TITLE_BOUNDS.bottom * vizScale + 20 * vizScale
-  );
-  if (startHint) {
-    startHint.position(
-      originX - startHint.size().width / 2,
-      originY - visualizerRadius * vizScale - 50
-    );
+    originY = height * 0.68;
   }
 }
 
-// Keep the canvas filling the window, and recompute layout/UI position on resize
+// Positions the start hint above the visualizer circle (desktop) or above the stacked
+// title block (mobile). The UI panel itself is centered/anchored entirely via CSS.
+function positionStartHint() {
+  if (!startHint) return;
+  let hintY =
+    width >= height
+      ? originY - visualizerRadius * vizScale - 50
+      : originY + (MOBILE_TITLE_TOP - 40) * vizScale;
+  startHint.position(originX - startHint.size().width / 2, hintY);
+}
+
+// Keep the canvas filling the window, and recompute layout/hint position on resize
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   updateLayout();
-  positionUI();
+  positionStartHint();
 }
 
 // Function for text elements in UI
@@ -163,13 +164,18 @@ function draw() {
 
   shakeUIContainer(amp); // DOM element, independent of the canvas transform below
 
+  // The background image always fills/centers on the actual window, independent of the
+  // visualizer's responsive origin and scale
   push();
-  translate(originX, originY);
-  scale(vizScale);
+  translate(width / 2, height / 2);
   drawBackgroundImage(amp);
   pop();
 
   drawDarkOverlay(amp); // Drawn in absolute canvas space so it fully covers the viewport at any scale
+
+  if (rainbowToggle.checked()) {
+    rainbowHue = (rainbowHue + RAINBOW_SPEED) % 360; // Shared hue advances once per frame, not per particle
+  }
 
   let waveColor = colorPicker.color(); // Get selected color, used for both the waveform and the title card
 
@@ -177,6 +183,7 @@ function draw() {
   translate(originX, originY);
   scale(vizScale);
   drawWaveform(waveColor);
+  drawClickHintRing();
 
   if (song.isPlaying()) {
     spawnParticles(bass);
@@ -187,6 +194,19 @@ function draw() {
   if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
     drawTitleCard(waveColor, amp);
   }
+  pop();
+}
+
+// A subtle pulsing ring just outside the click-to-play radius, hinting where to click.
+// Only shown before the song has ever been played (same lifetime as the start hint text).
+function drawClickHintRing() {
+  if (!startHint) return;
+  push();
+  noFill();
+  let pulse = (sin(frameCount * 0.05) + 1) / 2; // Breathes between 0 and 1
+  stroke(255, 255, 255, lerp(30, 110, pulse));
+  strokeWeight(2);
+  ellipse(0, 0, visualizerRadius * 2 + 40, visualizerRadius * 2 + 40);
   pop();
 }
 
@@ -202,19 +222,17 @@ function drawBackgroundImage(amp) {
   pop();
 }
 
-// Bumps the UI container around on loud bass hits, otherwise keeps it steady
+// Bumps the UI container around on loud bass hits, otherwise keeps it steady.
+// The panel is horizontally centered via CSS (left: 50%), so every transform here
+// keeps the "translateX(-50%)" centering term and just adds the shake offset to it.
 function shakeUIContainer(amp) {
   if (amp > 229) {
-    push();
-    rotate(random(-10, 10)); // Random rotation of UI
     uiContainer.style(
       "transform",
-      `translate(${random(-5, 5)}px, ${random(-5, 5)}px)` //query a random number between two values and insert in string value
+      `translate(calc(-50% + ${random(-5, 5)}px), ${random(-5, 5)}px)`
     );
-    pop();
   } else {
-    // Reset UI position when amplitude is below threshold
-    uiContainer.style("transform", "translate(0px, 0px)");
+    uiContainer.style("transform", "translateX(-50%)");
   }
 }
 
@@ -274,19 +292,30 @@ function updateAndShowParticles(amp) {
   }
 }
 
-// Draws the "welcome to the PINK PONY {CLUB}" title card, fading in/out with amplitude
+// Draws the "welcome to the PINK PONY {CLUB}" title card, fading in/out with amplitude.
+// Desktop: to the right of the circle. Mobile/narrow: centered and stacked above the circle.
 function drawTitleCard(waveColor, amp) {
   push();
   let textAlpha = map(amp, 200, 240, 50, 255);
   fill(waveColor.levels[0], waveColor.levels[1], waveColor.levels[2], textAlpha);
 
-  textAlign(LEFT, CENTER);
-  textSize(45);
-  text("welcome to the", 277, -190);
-  textSize(128);
-  text("PINK", 275, -110);
-  text("PONY", 275, 0);
-  text("{CLUB}", 237, 110);
+  if (width >= height) {
+    textAlign(LEFT, CENTER);
+    textSize(45);
+    text("welcome to the", 277, -190);
+    textSize(128);
+    text("PINK", 275, -110);
+    text("PONY", 275, 0);
+    text("{CLUB}", 237, 110);
+  } else {
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("welcome to the", 0, MOBILE_TITLE_TOP + 30);
+    textSize(90);
+    text("PINK", 0, MOBILE_TITLE_TOP + 130);
+    text("PONY", 0, MOBILE_TITLE_TOP + 230);
+    text("{CLUB}", 0, MOBILE_TITLE_BOTTOM);
+  }
   pop();
 }
 
@@ -349,12 +378,11 @@ function smoothWave(wave, smoothingRange) {
   return smoothedWave; // once every array value is checked and averaged, return the smoothed waveform
 }
 
-// Returns the next color in the rainbow sequence for rainbow mode, advancing the shared hue counter
-function nextRainbowColor() {
+// Returns the current shared rainbow color (see rainbowHue, advanced once per frame in draw())
+function currentRainbowColor() {
   colorMode(HSB, 360, 100, 100, 255);
   let rainbowColor = color(rainbowHue, 85, 100);
   colorMode(RGB, 255); // Restore the default color mode used everywhere else
-  rainbowHue = (rainbowHue + 18) % 360; // Step to the next hue for the next particle
   return rainbowColor;
 }
 
@@ -384,8 +412,8 @@ class Particle {
     // Random rotation for particle based on 360deg
     this.rotation = random(TWO_PI);
 
-    // Set particle color: cycle through the rainbow if rainbow mode is on, otherwise use the color picker
-    this.color = rainbowToggle.checked() ? nextRainbowColor() : colorPicker.color();
+    // Color when rainbow mode is off; if it's on, show() uses the shared rainbow color instead
+    this.color = colorPicker.color();
   }
 
   //listens every frame to update particle behaviour
@@ -423,6 +451,10 @@ class Particle {
     let maxDistance = (width / 2 / vizScale) * 0.5;
     let distance = dist(0, 0, this.pos.x, this.pos.y);
 
+    // In rainbow mode, every particle reads the same shared hue each frame (see draw()),
+    // so they all shift color together instead of each keeping the hue from when it spawned
+    let baseColor = rainbowToggle.checked() ? currentRainbowColor() : this.color;
+
     // Set the alpha transparency based on distance (for fade out)
     //lerp = linear interpolation --> set between 255 and 0, based on the distance from the center, then setting the ratio from 1 (full alpha) to 0 (fully faded)
     let alpha = lerp(240, 0, map(distance, 0, maxDistance, 1, 0.1));
@@ -431,12 +463,12 @@ class Particle {
     //same as alpha but takes the current color HSB brightness (second value)
     // dimmer at edges
     let brightness = lerp(
-      this.color.levels[2],
+      baseColor.levels[2],
       255,
       map(distance, 0, maxDistance, 0.6, 1)
     ); // Brighter at center
     let saturation = lerp(
-      this.color.levels[1],
+      baseColor.levels[1],
       255,
       map(distance, 0, maxDistance, 0, 0.2)
     ); // More saturated at center, 50% saturation at edges
@@ -448,7 +480,7 @@ class Particle {
 
     // Draw different shapes based on random selection
     // Uses color picker Hue, plus the saturation, brightness and alpha values and applies those to whatever shape type is chosen circle=0,square=1,triangle=2 (coordinates are based on the new 0,0 set at 'push')
-    fill(this.color.levels[0], saturation, brightness, alpha);
+    fill(baseColor.levels[0], saturation, brightness, alpha);
     if (this.shapeType === 0) {
       ellipse(0, 0, this.w, this.w); // Ellipse
     } else if (this.shapeType === 1) {
