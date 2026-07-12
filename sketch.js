@@ -2,12 +2,24 @@ var song;
 var img;
 var fft; //audio frequency analyzer that is used throughout the visualizer
 var particles = [];
-var uiContainer;
+var uiContainer, fxToggle;
 var sizeSlider, accelerationSlider, colorPicker, volumeSlider, playButton, rainbowToggle;
 var startHint;
 var particleSpeed = 0.05; // Default speed of particles
-var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas
+var visualizerRadius = 150; // Radius for mouselclickplayback and the visualizer circle on the canvas (in local, unscaled units)
 var rainbowHue = 0; // Current hue for rainbow mode, advances each time a particle is spawned
+
+// The visualizer's origin (in absolute canvas pixels) and scale, recomputed on resize.
+// Desktop: pillarboxed so a square window shows the right half of the visualizer, widening
+// windows reveal more of the left side. Narrow/mobile: scaled down to fit the window width.
+var originX = 0;
+var originY = 0;
+var vizScale = 1;
+
+// Rough bounding box (in local, unscaled units) of the "PINK PONY {CLUB}" title text,
+// used to position the UI panel underneath it. Kept separate from the exact per-line
+// x/y values in drawTitleCard() so tweaking one doesn't require touching the other.
+var TITLE_BOUNDS = { left: 237, bottom: 180 };
 
 // Preloading sound and image files
 function preload() {
@@ -26,7 +38,7 @@ function setup() {
 
   img.filter(BLUR, 5); // Apply a blur effect to the background image
 
-  // Create the UI container div
+  // Create the UI container div: a horizontal row of controls that lives under the title
   uiContainer = createDiv();
   uiContainer.addClass("ui-panel");
 
@@ -40,54 +52,84 @@ function setup() {
 
   // Particle size slider
   sizeSlider = createSlider(1, 10, 5.5, 0.1); // Slider to control particle size (min,max,default,increment values)
-  createLabel("Sparkle Size").parent(uiContainer); // Add label for particle size
-  sizeSlider.parent(uiContainer); //put this in the parent container
+  createControlGroup("Sparkle Size", sizeSlider).parent(uiContainer);
 
   // Acceleration slider
   accelerationSlider = createSlider(0.00000001, 0.00008, 0.00001, 0.00000001); // Slider to control particle acceleration (min,max,default,increment values)
-  createLabel("Energy").parent(uiContainer);
-  accelerationSlider.parent(uiContainer); //put this in the parent container
+  createControlGroup("Energy", accelerationSlider).parent(uiContainer);
 
   // Volume slider
   volumeSlider = createSlider(0, 1, 0.8, 0.01); // Slider to control song volume
-  createLabel("Volume").parent(uiContainer);
-  volumeSlider.parent(uiContainer);
+  createControlGroup("Volume", volumeSlider).parent(uiContainer);
 
-  // Color picker for particles
+  // Color picker for particles: a small square swatch rather than a big rectangle
   colorPicker = createColorPicker("#ff00ff"); // Default particle color (pink)
-  createLabel("Color").parent(uiContainer); //put this in the parent container
-  colorPicker.size(150, 80); //dimensions
-  colorPicker.parent(uiContainer); //put this in the parent container
+  colorPicker.size(48, 48);
+  createControlGroup("Color", colorPicker).parent(uiContainer);
 
   // Rainbow mode toggle: cycles each new particle's color through the hue wheel instead of using the color picker
-  rainbowToggle = createCheckbox("Rainbow Mode", false);
+  rainbowToggle = createCheckbox("Rainbow", false);
   rainbowToggle.addClass("ui-checkbox");
   rainbowToggle.parent(uiContainer);
+
+  // Hamburger-style toggle shown only on narrow/mobile screens (see the media query in style.css)
+  fxToggle = createButton("☰ FX Controls");
+  fxToggle.addClass("fx-toggle");
+  fxToggle.mousePressed(function () {
+    uiContainer.toggleClass("open");
+  });
 
   // Hint shown before the song has ever been started
   startHint = createDiv("click outside the circle to play");
   startHint.addClass("start-hint");
 
-  positionUI(); // Center the UI container now that it's built
+  updateLayout(); // Compute the initial origin/scale before positioning anything
+  positionUI(); // Place the UI panel now that it's built
 }
 
-// Recenters the UI container (and start hint, if present) in the canvas
+// Wraps a labeled control (slider or color picker) in its own small vertical group,
+// so the panel can lay controls out left-to-right as a row
+function createControlGroup(labelText, element) {
+  var group = createDiv();
+  group.addClass("control-group");
+  createLabel(labelText).parent(group);
+  element.parent(group);
+  return group;
+}
+
+// Recomputes the visualizer's origin and scale for the current window size.
+// Desktop (width >= height): pillarboxed so a square window puts the visualizer's
+// horizontal center at the left edge, and wider windows reveal more of its left side.
+// Mobile/narrow (width < height): scaled down so the whole visualizer fits the width.
+function updateLayout() {
+  if (width >= height) {
+    vizScale = 1;
+    originX = max(0, (width - height) / 2);
+  } else {
+    vizScale = width / height;
+    originX = width / 2;
+  }
+  originY = height / 2;
+}
+
+// Positions the UI panel just under the title text, and the start hint above the visualizer circle
 function positionUI() {
   uiContainer.position(
-    width / 2 - uiContainer.size().width / 2,
-    height / 2 - uiContainer.size().height / 2 + 55
+    originX + TITLE_BOUNDS.left * vizScale,
+    originY + TITLE_BOUNDS.bottom * vizScale + 20 * vizScale
   );
   if (startHint) {
     startHint.position(
-      width / 2 - startHint.size().width / 2,
-      height / 2 - visualizerRadius - 50
+      originX - startHint.size().width / 2,
+      originY - visualizerRadius * vizScale - 50
     );
   }
 }
 
-// Keep the canvas and UI filling the window on resize
+// Keep the canvas filling the window, and recompute layout/UI position on resize
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
+  updateLayout();
   positionUI();
 }
 
@@ -100,30 +142,40 @@ function createLabel(text) {
 
 // Change the cursor to a hand outside the visualizer's click-to-play radius
 function mouseMoved() {
-  var distance = dist(mouseX, mouseY, width / 2, height / 2);
-  cursor(distance > visualizerRadius ? HAND : ARROW);
+  var distance = dist(mouseX, mouseY, originX, originY);
+  cursor(distance > visualizerRadius * vizScale ? HAND : ARROW);
 }
 // etch-a-sketch begins
 function draw() {
   background(0); // Clear background with black
 
+  updateLayout(); // Keep origin/scale current even if draw() was paused during a resize
+
   song.setVolume(volumeSlider.value()); // Apply the volume slider each frame
 
   fft.analyze(); // Always analyze the FFT for the waveform
 
-  line(width / 2, 0, width / 2, height); // Vertical center guideline, drawn before translating below
+  line(originX, 0, originX, height); // Vertical guideline at the visualizer's center, drawn before translating below
 
   // Bass (20-440Hz) energy doubles as our overall "reactivity" amplitude for effects
   var bass = fft.getEnergy(20, 440);
   var amp = bass;
 
-  translate(width / 2, height / 2); // Translate to center of canvas for everything else
+  shakeUIContainer(amp); // DOM element, independent of the canvas transform below
 
+  push();
+  translate(originX, originY);
+  scale(vizScale);
   drawBackgroundImage(amp);
-  shakeUIContainer(amp);
-  drawDarkOverlay(amp);
+  pop();
+
+  drawDarkOverlay(amp); // Drawn in absolute canvas space so it fully covers the viewport at any scale
 
   let waveColor = colorPicker.color(); // Get selected color, used for both the waveform and the title card
+
+  push();
+  translate(originX, originY);
+  scale(vizScale);
   drawWaveform(waveColor);
 
   if (song.isPlaying()) {
@@ -135,6 +187,7 @@ function draw() {
   if (song.currentTime() <= 0.00001 || song.currentTime() >= 64.17) {
     drawTitleCard(waveColor, amp);
   }
+  pop();
 }
 
 // Draws the blurred background image, with a small random tilt on loud bass hits
@@ -165,12 +218,16 @@ function shakeUIContainer(amp) {
   }
 }
 
-// Applies a rectangle overlay with dynamic transparency (darker when quiet, brighter when loud)
+// Applies a rectangle overlay with dynamic transparency (darker when quiet, brighter when loud).
+// Drawn with the transform reset so it covers the full canvas regardless of the visualizer's scale.
 function drawDarkOverlay(amp) {
   let alpha = map(amp, 180, 255, 150, 50, true); // Alpha transparency based on amplitude (bass amp,inputMin,inputMax,alphawhenquiet,alphawhenbumping), clamped so silence doesn't blow past full opacity
+  push();
+  resetMatrix();
   fill(0, 0, 0, alpha); // Black color with transparency
   noStroke();
-  rect(0, 0, width + 100, height + 100); // Overlay rectangle larger than canvas
+  rect(width / 2, height / 2, width, height); // Covers the full canvas (rectMode(CENTER) is set in setup())
+  pop();
 }
 
 // Draws the smoothed, symmetric polar waveform shape
@@ -252,16 +309,16 @@ function togglePlay() {
 
 // Mouse click handler to toggle play/pause when clicking outside visualizer radius
 function mouseClicked(event) {
-  // Ignore clicks on the UI panel itself (p5 fires this for clicks anywhere on the page,
-  // not just the canvas, so interacting with a slider/checkbox shouldn't also toggle playback)
-  if (event && uiContainer.elt.contains(event.target)) {
+  // Ignore clicks on the UI panel or the mobile FX toggle (p5 fires this for clicks anywhere
+  // on the page, not just the canvas, so interacting with a control shouldn't also toggle playback)
+  if (event && (uiContainer.elt.contains(event.target) || fxToggle.elt.contains(event.target))) {
     return;
   }
 
-  var distance = dist(mouseX, mouseY, width / 2, height / 2); // Calculate distance from center
+  var distance = dist(mouseX, mouseY, originX, originY); // Calculate distance from the visualizer's center
 
   // Only toggle play/pause if the click is outside the visualizer radius
-  if (distance > visualizerRadius) {
+  if (distance > visualizerRadius * vizScale) {
     togglePlay();
   }
 }
@@ -348,11 +405,14 @@ class Particle {
   edges() {
     //asks is this particle's x,y off the screen, returns boolean true/false
     // checks all four conditions, if any are true, returns "TRUE", otherwise we're still on the screen, says 'FALSE'
+    // Divide by vizScale since these positions are in local (pre-scale) units, while width/height are absolute pixels
+    let halfW = width / 2 / vizScale;
+    let halfH = height / 2 / vizScale;
     return (
-      this.pos.x < -width / 2 ||
-      this.pos.x > width / 2 ||
-      this.pos.y < -height / 2 ||
-      this.pos.y > height / 2
+      this.pos.x < -halfW ||
+      this.pos.x > halfW ||
+      this.pos.y < -halfH ||
+      this.pos.y > halfH
     ); // Check if particle is off screen
   }
 
@@ -360,7 +420,7 @@ class Particle {
     //runs if particle still on screen
     noStroke(); // No outline for the shapes
     //sets how far from center of canvas particles go before they disappear
-    let maxDistance = (width / 2) * 0.5;
+    let maxDistance = (width / 2 / vizScale) * 0.5;
     let distance = dist(0, 0, this.pos.x, this.pos.y);
 
     // Set the alpha transparency based on distance (for fade out)
